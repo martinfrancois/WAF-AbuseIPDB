@@ -121,7 +121,7 @@ def get_blocked_ip():
 
 # Define a function to generate a comment for the Bad IP Address report intended for AbuseIPDB
 def get_comment(it):
-  return "Unauthorized " + it['clientRequestHTTPProtocol'] + " request: (ASN: "+it['clientAsn']+") (Network: "+it['clientASNDescription']+") (Method: "+it['clientRequestHTTPMethodName']+") (Path: "+it['clientRequestPath']+") (Query: "+it['clientRequestQuery']+") (User Agent: "+it['userAgent']+") (Timestamp: "+it['datetime']+")"
+  return "Unauthorized " + it['clientRequestHTTPProtocol'] + " request: (ASN: "+it['clientAsn']+") (Network: "+it['clientASNDescription']+") (Method: "+it['clientRequestHTTPMethodName']+") (Path: "+it['clientRequestPath']+") (Query: "+it['clientRequestQuery']+") (User Agent: "+it['userAgent']+")"
 
 # Define a function to report a bad IP address to AbuseIPDB
 def report_bad_ip(it):
@@ -130,7 +130,8 @@ def report_bad_ip(it):
     params = {
       'ip': it['clientIP'],
       'categories': '9,13,14,15,16,19,20,21',
-      'comment': get_comment(it)
+      'comment': get_comment(it),
+      'timestamp': it['datetime']
     }
     headers = {
       'Accept': 'application/json',
