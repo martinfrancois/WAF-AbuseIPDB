@@ -7,38 +7,14 @@ import json
 import requests
 import time
 import os
-import yaml
-import sys
 import hashlib
 from datetime import datetime
 
-# Define function to load configuration
-def load_config(path):
-    # Open file for read
-  f = open(path, 'r', encoding='utf-8')
-  # Read file contents
-  ystr = f.read()
-  # Load YAML string into Python object
-  ymllist = yaml.load(ystr, Loader=yaml.FullLoader)
-  # Return loaded configuration
-  return ymllist
-
-# Check if configuration file exists
-if os.path.exists('config.yml'):
-    # If configuration file exists, load it
-  c=load_config('config.yml')
-  # Set Cloudflare API Secret References
-  CLOUDFLARE_ZONE_ID = c['CLOUDFLARE_ZONE_ID']
-  CLOUDFLARE_EMAIL = c['CLOUDFLARE_EMAIL']
-  CLOUDFLARE_API_KEY = c['CLOUDFLARE_API_KEY']
-  # Set AbuseIPDB API Key
-  ABUSEIPDB_API_KEY = c['ABUSEIPDB_API_KEY']
-else:
-    # If configuration file does not exist, get credentials from environment variables
-  CLOUDFLARE_ZONE_ID = os.environ["CLOUDFLARE_ZONE_ID"]
-  CLOUDFLARE_EMAIL = os.environ["CLOUDFLARE_EMAIL"]
-  CLOUDFLARE_API_KEY = os.environ["CLOUDFLARE_API_KEY"]
-  ABUSEIPDB_API_KEY = os.environ["ABUSEIPDB_API_KEY"]
+CLOUDFLARE_ZONE_ID = os.environ["CLOUDFLARE_ZONE_ID"]
+CLOUDFLARE_EMAIL = os.environ["CLOUDFLARE_EMAIL"]
+CLOUDFLARE_API_KEY = os.environ["CLOUDFLARE_API_KEY"]
+ABUSEIPDB_API_KEY = os.environ["ABUSEIPDB_API_KEY"]
+PEPPER = os.environ.get("PEPPER", "")
 
 rangeFrom = time.localtime(time.time()-60*60*2.5)
 rangeUntil = time.localtime(time.time())
@@ -132,8 +108,7 @@ def get_comment(it):
 # Define a function to hash the IP, to avoid logging traceable information
 def hash_ip(ip):
   salt = datetime.now().strftime("%Y-%m-%dT%H")
-  pepper = os.environ.get("PEPPER", "")
-  combined_string = ip + salt + pepper
+  combined_string = ip + salt + PEPPER
   hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
   return hashed
 

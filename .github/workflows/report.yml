@@ -26,3 +26,4 @@ jobs:
         CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
         CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
         ABUSEIPDB_API_KEY: ${{ secrets.ABUSEIPDB_API_KEY }}
+        PEPPER: ${{ secrets.PEPPER }}
