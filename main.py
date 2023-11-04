@@ -121,7 +121,7 @@ def get_blocked_ip():
 
 # Define a function to generate a comment for the Bad IP Address report intended for AbuseIPDB
 def get_comment(it):
-  return "Threat Blocked by BeeHive from (ASN:"+it['clientAsn']+") (Network:"+it['clientASNDescription']+") (Host:"+it['clientRequestHTTPHost']+") (Method:"+it['clientRequestHTTPMethodName']+") (Protocol:"+it['clientRequestHTTPProtocol']+") (Timestamp:"+it['datetime']+")"
+  return "Unauthorized " + it['clientRequestHTTPProtocol'] + " request: (ASN: "+it['clientAsn']+") (Network: "+it['clientASNDescription']+") (Method: "+it['clientRequestHTTPMethodName']+") (Path: "+it['clientRequestPath']+") (Query: "+it['clientRequestQuery']+") (User Agent: "+it['userAgent']+") (Timestamp: "+it['datetime']+")"
 
 # Define a function to report a bad IP address to AbuseIPDB
 def report_bad_ip(it):
