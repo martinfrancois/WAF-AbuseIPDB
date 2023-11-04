@@ -9,6 +9,8 @@ import time
 import os
 import yaml
 import sys
+import hashlib
+from datetime import datetime
 
 # Define function to load configuration
 def load_config(path):
@@ -127,6 +129,14 @@ def get_blocked_ip():
 def get_comment(it):
   return "Unauthorized " + it['clientRequestHTTPProtocol'] + " request: (ASN: "+it['clientAsn']+") (Network: "+it['clientASNDescription']+") (Method: "+it['clientRequestHTTPMethodName']+") (Path: "+it['clientRequestPath']+") (Query: "+it['clientRequestQuery']+") (User Agent: "+it['userAgent']+")"
 
+# Define a function to hash the IP, to avoid logging traceable information
+def hash_ip(ip):
+  salt = datetime.now().strftime("%Y-%m-%dT%H")
+  pepper = os.environ.get("PEPPER", "")
+  combined_string = ip + salt + pepper
+  hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
+  return hashed
+
 # Define a function to report a bad IP address to AbuseIPDB
 def report_bad_ip(it):
   try:
@@ -145,13 +155,15 @@ def report_bad_ip(it):
     r=requests.post(url=url, headers=headers, params=params)
     if r.status_code==200:
         # If response code 200, record a successfully reported IP
-      print("reported:",it['clientIP'])
+      print("reported:",hash_ip(it['clientIP']))
     else:
         # Otherwise, print the status code as an error
       print("error:",r.status_code)
       # Parse the response data and print it
     decodedResponse = json.loads(r.text)
-    print(json.dumps(decodedResponse, sort_keys=True, indent=4))
+    responseData = decodedResponse["data"]
+    responseData["ipAddress"] = hash_ip(responseData["ipAddress"])
+    print(json.dumps(responseData, sort_keys=True, indent=4))
   except Exception as e:
       # If there is an exception, print the needed error message to account for it
     print("error:",e)
@@ -164,7 +176,6 @@ print("==================== Start ====================")
 print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
 print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
 a=get_blocked_ip()
-print(str(type(a)))
 if isinstance(a, dict) and len(a)>0:
   ip_bad_list=a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
   print(len(ip_bad_list))
