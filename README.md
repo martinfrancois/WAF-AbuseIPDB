@@ -4,7 +4,7 @@
 
 This is a Python script that queries Cloudflare's firewall event logs and reports any potentially malicious IP addresses to AbuseIPDB, a database that tracks IPs associated with malicious activities.
 
-The script first imports several libraries: `json`, `requests`, `time`, `os`, `yaml`, and `sys`.
+The script first imports several libraries: `json`, `requests`, `time`, `os`, `hashlib`, and `datetime`.
 
 `json` is used for encoding and decoding JSON data, which is used by the Cloudflare and AbuseIPDB APIs.
 
@@ -12,41 +12,47 @@ The script first imports several libraries: `json`, `requests`, `time`, `os`, `y
 
 `time` is used to get the current time and format it for use in the query payload.
 
-`os` and `sys` are used to load configuration data from a YAML file or command line arguments.
+`os` is used to load configuration data from environment variables.
 
-The `load_config` function reads a YAML file and returns a dictionary of the file's contents.
+The script reads five environment variables: `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `ABUSEIPDB_API_KEY` and `PEPPER`.
+The first four are mandatory, while `PEPPER` is optional and initialized to an empty string by default.
+However, it is recommended to define `PEPPER` as a long, random string that is rotated periodically for maximum security.
 
-If a `config.yml` file exists in the current directory, the script loads configuration data from it. If the file does not exist, the script expects to receive four command line arguments: `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, and `ABUSEIPDB_API_KEY`.
-
-The script then constructs a payload containing a GraphQL query that filters Cloudflare's firewall event logs for potentially malicious events that occurred within the last 8.5 hours. The payload includes Cloudflare's `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, and `CLOUDFLARE_API_KEY` for authentication. The payload is sent as a `JSON` string to the Cloudflare API.
+The script then constructs a payload containing a GraphQL query that filters Cloudflare's firewall event logs for potentially malicious events that occurred within the last 2.5 hours. The payload includes Cloudflare's `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, and `CLOUDFLARE_API_KEY` for authentication. The payload is sent as a `JSON` string to the Cloudflare API.
 
 The script defines a function `get_blocked_ip` that sends the payload to the Cloudflare API and returns a list of potentially malicious IP addresses. The function retries the API call up to 60 times, with a 1 second pause between each attempt, before giving up.
 
 The script defines a function `get_comment` that takes a dictionary containing information about a potentially malicious IP address and returns a string that describes the IP address and associated details for reporting to AbuseIPDB.
 
+The script defines a function `hash_ip` that takes an ip address, concatenates it with the current date and hour (in 24h format) as a salt and the value assigned to the environment variable of `PEPPER`.
+Then it hashes that with SHA3-256 and returns the hash in hexadecimal format as a string.
+This avoids having IP addresses in plaintext in the logs, while still allowing to trace the ip addresses for debugging purposes.
+
 The script defines a function `report_bad_ip` that takes a dictionary containing information about a potentially malicious IP address, constructs a payload containing the IP address and associated details, and sends the payload to the AbuseIPDB API to report the IP address as potentially malicious.
 
-The script prints a message indicating that it has started and the current time. It then calls the `get_blocked_ip` function to retrieve a list of potentially malicious IP addresses from Cloudflare's firewall event logs. If the function returns a non-empty list, the script calls the `report_bad_ip` function for each IP address in the list, excluding any IP addresses associated with a specific rule ID. The script prints a message indicating the number of potentially malicious IP addresses found in the event logs.
+The script prints a message indicating that it has started, the current time and the earliest time it considers events from. It then calls the `get_blocked_ip` function to retrieve a list of potentially malicious IP addresses from Cloudflare's firewall event logs. If the function returns a non-empty list, the script calls the `report_bad_ip` function for each IP address in the list, excluding any IP addresses associated with a specific rule ID. The script prints a message indicating the number of potentially malicious IP addresses found in the event logs.
 
 ## How to use for yourself
 
-Don't fork this repo - that's not how this is designed to be used. Instead, select "Use this template", then "Create new repository".
+Don't fork this repo - that's not how this is designed to be used.
+Instead, select "Use this template", then "Create new repository".
 
 # First, Enable and Configure GitHub Actions：
 
-If you don't configure these, you'll stare at errors for eternity wondering where you're fucking up.
-After you create a new repository thru "Use This Template", go into the repository settings, then go to "Secrets", then add the following things with the following names. 
+If you don't configure these, you'll stare at errors for eternity wondering what you are doing wrong.
+After you create a new repository through "Use This Template", go into the repository settings, then go to "Secrets" and "Github Actions", then add the following as repository secrets with the following names and the corresponding values:
 
 - `CLOUDFLARE_ZONE_ID`: Cloudflare ZONE ID
 - `CLOUDFLARE_API_KEY`: Cloudflare API Key
 - `CLOUDFLARE_EMAIL`: Cloudflare Email
 - `ABUSEIPDB_API_KEY`: AbuseIPDB API Key
+- `PEPPER`: Pepper for hashing the IP address (optional)
 
   After this, modify the name of your `report.yml` workflow to make the repository name match YOUR repository name. 
 
 **PLEASE READ THIS:** Before you enable this for the first time and allow it to start reporting, REVIEW YOUR WAF SETTINGS. This worker will report your firewall events overall, so if you have a configuration that causes requests to generate logs for no reason, OR a specific security setting that issues Managed Challenges regardless of condition, then you'll equally start reporting random IP's for no reason. If you do this, your AbuseIPDB key will be revoked, and your account could be locked and/or terminated. 
 
-DO NOT TURN THIS ON IN IT'S DEFAULT EXISTANCE IF YOUR WAF CONFIG IS FUCKING OBNOXIOUS
+DO NOT TURN THIS ON IN IT'S DEFAULT EXISTANCE IF YOUR WAF CONFIG IS OBNOXIOUS
 YOU WILL RUIN IT FOR EVERYONE AND CAUSE GENERAL TECHNICAL MAYHEM.
 
 ## Related
