@@ -15,9 +15,14 @@ CLOUDFLARE_EMAIL = os.environ["CLOUDFLARE_EMAIL"]
 CLOUDFLARE_API_KEY = os.environ["CLOUDFLARE_API_KEY"]
 ABUSEIPDB_API_KEY = os.environ["ABUSEIPDB_API_KEY"]
 PEPPER = os.environ.get("PEPPER", "")
+IGNORED_IP_ADDRESSES = os.environ.get("IGNORED_IP_ADDRESSES", "")  # string of IP addresses delimited by a comma
+
+def array_from_string(input_string):
+    return input_string.split(',') if input_string else []
 
 rangeFrom = time.localtime(time.time()-60*60*2.5)
 rangeUntil = time.localtime(time.time())
+ignored_ip_addresses = array_from_string(IGNORED_IP_ADDRESSES)
 
 # Set payload for Cloudflare API requests
 PAYLOAD={
@@ -158,7 +163,7 @@ if isinstance(a, dict) and len(a)>0:
   reported_ip_list=[]
   for i in ip_bad_list:
     if i['ruleId'] not in excepted_ruleId:
-      if i['clientIP'] not in reported_ip_list:
+      if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
         report_bad_ip(i)
         reported_ip_list.append(i['clientIP'])
 

@@ -27,3 +27,4 @@ jobs:
         CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
         ABUSEIPDB_API_KEY: ${{ secrets.ABUSEIPDB_API_KEY }}
         PEPPER: ${{ secrets.PEPPER }}
+        IGNORED_IP_ADDRESSES: ${{ secrets.IGNORED_IP_ADDRESSES }}

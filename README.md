@@ -14,8 +14,8 @@ The script first imports several libraries: `json`, `requests`, `time`, `os`, `h
 
 `os` is used to load configuration data from environment variables.
 
-The script reads five environment variables: `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `ABUSEIPDB_API_KEY` and `PEPPER`.
-The first four are mandatory, while `PEPPER` is optional and initialized to an empty string by default.
+The script reads six environment variables: `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY`, `ABUSEIPDB_API_KEY`, `PEPPER` and `IGNORED_IP_ADDRESSES`.
+The first four are mandatory, while `PEPPER` and `IGNORED_IP_ADDRESSES` are optional and initialized to an empty string by default.
 However, it is recommended to define `PEPPER` as a long, random string that is rotated periodically for maximum security.
 
 The script then constructs a payload containing a GraphQL query that filters Cloudflare's firewall event logs for potentially malicious events that occurred within the last 2.5 hours. The payload includes Cloudflare's `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_EMAIL`, and `CLOUDFLARE_API_KEY` for authentication. The payload is sent as a `JSON` string to the Cloudflare API.
@@ -30,7 +30,7 @@ This avoids having IP addresses in plaintext in the logs, while still allowing t
 
 The script defines a function `report_bad_ip` that takes a dictionary containing information about a potentially malicious IP address, constructs a payload containing the IP address and associated details, and sends the payload to the AbuseIPDB API to report the IP address as potentially malicious.
 
-The script prints a message indicating that it has started, the current time and the earliest time it considers events from. It then calls the `get_blocked_ip` function to retrieve a list of potentially malicious IP addresses from Cloudflare's firewall event logs. If the function returns a non-empty list, the script calls the `report_bad_ip` function for each IP address in the list, excluding any IP addresses associated with a specific rule ID. The script prints a message indicating the number of potentially malicious IP addresses found in the event logs.
+The script prints a message indicating that it has started, the current time and the earliest time it considers events from. It then calls the `get_blocked_ip` function to retrieve a list of potentially malicious IP addresses from Cloudflare's firewall event logs. If the function returns a non-empty list, the script calls the `report_bad_ip` function for each IP address in the list, excluding any IP addresses associated with a specific rule ID or ignored by `IGNORED_IP_ADDRESSES`. The script prints a message indicating the number of potentially malicious IP addresses found in the event logs.
 
 ## How to use for yourself
 
@@ -47,6 +47,7 @@ After you create a new repository through "Use This Template", go into the repos
 - `CLOUDFLARE_EMAIL`: Cloudflare Email
 - `ABUSEIPDB_API_KEY`: AbuseIPDB API Key
 - `PEPPER`: Pepper for hashing the IP address (optional)
+- `IGNORED_IP_ADDRESSES`: Comma delimited string containing ip addresses not to report (optional)
 
   After this, modify the name of your `report.yml` workflow to make the repository name match YOUR repository name. 
 
