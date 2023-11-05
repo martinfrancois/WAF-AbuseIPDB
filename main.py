@@ -108,7 +108,7 @@ def get_blocked_ip():
 
 # Define a function to generate a comment for the Bad IP Address report intended for AbuseIPDB
 def get_comment(it):
-  return "Unauthorized " + it['clientRequestHTTPProtocol'] + " request: (ASN: "+it['clientAsn']+") (Network: "+it['clientASNDescription']+") (Method: "+it['clientRequestHTTPMethodName']+") (Path: "+it['clientRequestPath']+") (Query: "+it['clientRequestQuery']+") (User Agent: "+it['userAgent']+")"
+  return "Unauthorized " + it['clientRequestHTTPProtocol'] + " request, ignoring robots.txt: (ASN: "+it['clientAsn']+") (Network: "+it['clientASNDescription']+") (Method: "+it['clientRequestHTTPMethodName']+") (Path: "+it['clientRequestPath']+") (Query: "+it['clientRequestQuery']+") (User Agent: "+it['userAgent']+")"
 
 # Define a function to hash the IP, to avoid logging traceable information
 def hash_ip(ip):
