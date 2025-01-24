@@ -8,19 +8,33 @@ import requests
 import time
 import os
 import hashlib
+import sys
 from datetime import datetime
 
 # Accessing environment variables
-CLOUDFLARE_ZONE_ID = os.environ["CLOUDFLARE_ZONE_ID"]
-CLOUDFLARE_EMAIL = os.environ["CLOUDFLARE_EMAIL"]
-CLOUDFLARE_API_KEY = os.environ["CLOUDFLARE_API_KEY"]
-ABUSEIPDB_API_KEY = os.environ["ABUSEIPDB_API_KEY"]
+CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID")
+CLOUDFLARE_EMAIL = os.environ.get("CLOUDFLARE_EMAIL")
+CLOUDFLARE_API_KEY = os.environ.get("CLOUDFLARE_API_KEY")
+ABUSEIPDB_API_KEY = os.environ.get("ABUSEIPDB_API_KEY")
 PEPPER = os.environ.get("PEPPER", "")
 IGNORED_IP_ADDRESSES = os.environ.get("IGNORED_IP_ADDRESSES", "")  # string of IP addresses delimited by a comma
 
+# Validate essential environment variables
+essential_vars = {
+    "CLOUDFLARE_ZONE_ID": CLOUDFLARE_ZONE_ID,
+    "CLOUDFLARE_EMAIL": CLOUDFLARE_EMAIL,
+    "CLOUDFLARE_API_KEY": CLOUDFLARE_API_KEY,
+    "ABUSEIPDB_API_KEY": ABUSEIPDB_API_KEY
+}
+
+missing_vars = [var for var, value in essential_vars.items() if not value]
+if missing_vars:
+    print(f"Error: Missing essential environment variables: {', '.join(missing_vars)}", file=sys.stderr)
+    sys.exit(1)
+
 def array_from_string(input_string):
     """Converts a comma-delimited string into a list."""
-    return input_string.split(',') if input_string else []
+    return [ip.strip() for ip in input_string.split(',')] if input_string else []
 
 # Define the time range for fetching firewall events
 rangeFrom = time.localtime(time.time() - 60 * 60 * 2.5)  # 2.5 hours ago
@@ -95,58 +109,65 @@ ttl = 60
 def get_blocked_ip():
     """
     Retrieves blocked IP addresses from Cloudflare's GraphQL API.
-    Handles errors gracefully and avoids infinite recursion.
+    Exits the script with status code 1 if it fails to fetch data.
     """
     global ttl
     ttl -= 1
     print("ttl:", ttl)
     if ttl <= 0:
-        print("TTL expired. Returning empty list.")
-        return {}
+        print("TTL expired. Exiting script due to repeated failures.", file=sys.stderr)
+        sys.exit(1)
     try:
         # Send a POST request to the Cloudflare API with the defined headers and PAYLOAD data
         response = requests.post("https://api.cloudflare.com/client/v4/graphql/", headers=headers, data=PAYLOAD)
+        response.raise_for_status()  # Raises HTTPError for bad HTTP status codes
         response_json = response.json()
-        
+
         if not response_json:
-            print("Empty response received from Cloudflare API.")
-            return {}
-        
+            print("Error: Empty response received from Cloudflare API.", file=sys.stderr)
+            sys.exit(1)
+
         if 'errors' in response_json:
-            print("API returned errors:")
-            print(json.dumps(response_json['errors'], indent=4))
-            return {}
-        
+            print("Error: Cloudflare API returned errors:", file=sys.stderr)
+            print(json.dumps(response_json['errors'], indent=4), file=sys.stderr)
+            sys.exit(1)
+
         if 'data' not in response_json:
-            print("Unexpected response structure:")
-            print(json.dumps(response_json, indent=4))
-            return {}
-        
+            print("Error: Unexpected response structure from Cloudflare API:", file=sys.stderr)
+            print(json.dumps(response_json, indent=4), file=sys.stderr)
+            sys.exit(1)
+
         return response_json
 
+    except requests.exceptions.RequestException as e:
+        print(f"Error: Failed to connect to Cloudflare API: {e}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError:
+        print("Error: Failed to decode JSON response from Cloudflare API.", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print("Exception occurred while fetching blocked IPs:", e)
-        return {}
+        print(f"Unexpected error while fetching blocked IPs: {e}", file=sys.stderr)
+        sys.exit(1)
 
 def get_comment(it):
     """
     Generates a comment for the Bad IP Address report intended for AbuseIPDB.
     """
     return (
-        "Unauthorized " + it['clientRequestHTTPProtocol'] + " request, ignoring robots.txt: "
-        "(ASN: " + it['clientAsn'] + ") "
-        "(Network: " + it['clientASNDescription'] + ") "
-        "(Method: " + it['clientRequestHTTPMethodName'] + ") "
-        "(Path: " + it['clientRequestPath'] + ") "
-        "(Query: " + it['clientRequestQuery'] + ") "
-        "(User Agent: " + it['userAgent'] + ")"
+        f"Unauthorized {it['clientRequestHTTPProtocol']} request, ignoring robots.txt: "
+        f"(ASN: {it['clientAsn']}) "
+        f"(Network: {it['clientASNDescription']}) "
+        f"(Method: {it['clientRequestHTTPMethodName']}) "
+        f"(Path: {it['clientRequestPath']}) "
+        f"(Query: {it['clientRequestQuery']}) "
+        f"(User Agent: {it['userAgent']})"
     )
 
 def hash_ip(ip):
     """
     Hashes the IP to avoid logging traceable information.
     """
-    salt = datetime.now().strftime("%Y-%m-%dT%H")
+    salt = datetime.utcnow().strftime("%Y-%m-%dT%H")
     combined_string = ip + salt + PEPPER
     hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
     return hashed
@@ -154,6 +175,7 @@ def hash_ip(ip):
 def report_bad_ip(it):
     """
     Reports a bad IP address to AbuseIPDB.
+    Exits the script with status code 1 if reporting fails.
     """
     try:
         url = 'https://api.abuseipdb.com/api/v2/report'
@@ -169,26 +191,36 @@ def report_bad_ip(it):
         }
         # Send a POST request to the AbuseIPDB API with the required contents
         r = requests.post(url=url, headers=headers_abuse, params=params)
+        
         if r.status_code == 200:
             # If response code 200, record a successfully reported IP
             print("Reported:", hash_ip(it['clientIP']))
         else:
-            # Otherwise, print the status code as an error
-            print("Error reporting IP:", r.status_code)
-            # Parse the response data and print it
+            # Otherwise, print the status code as an error and exit
+            print(f"Error: Failed to report IP {it['clientIP']} to AbuseIPDB. Status Code: {r.status_code}", file=sys.stderr)
             try:
                 decodedResponse = r.json()
                 if "data" in decodedResponse:
                     responseData = decodedResponse["data"]
                     responseData["ipAddress"] = hash_ip(responseData["ipAddress"])
-                    print(json.dumps(responseData, sort_keys=True, indent=4))
+                    print(json.dumps(responseData, sort_keys=True, indent=4), file=sys.stderr)
+                elif "errors" in decodedResponse:
+                    print("AbuseIPDB Errors:", json.dumps(decodedResponse["errors"], indent=4), file=sys.stderr)
                 else:
-                    print("Unexpected response structure from AbuseIPDB:", json.dumps(decodedResponse, indent=4))
+                    print("Unexpected response structure from AbuseIPDB:", json.dumps(decodedResponse, indent=4), file=sys.stderr)
             except json.JSONDecodeError:
-                print("Failed to decode JSON response from AbuseIPDB.")
+                print("Error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
+            sys.exit(1)
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error: Failed to connect to AbuseIPDB API: {e}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError:
+        print("Error: Failed to decode JSON response from AbuseIPDB API.", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        # If there is an exception, print the needed error message to account for it
-        print("Exception occurred while reporting bad IP:", e)
+        print(f"Unexpected error while reporting bad IP: {e}", file=sys.stderr)
+        sys.exit(1)
 
 # Define a list of excluded Cloudflare WAF Rule IDs
 excepted_ruleId = ["fa01280809254f82978e827892db4e46"]
@@ -203,18 +235,26 @@ a = get_blocked_ip()
 
 # Process the fetched data if it's a valid dictionary with content
 if isinstance(a, dict) and a:
-    ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
-    print(f"Number of firewall events fetched: {len(ip_bad_list)}")
+    try:
+        ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
+        print(f"Number of firewall events fetched: {len(ip_bad_list)}")
 
-    reported_ip_list = []
-    for i in ip_bad_list:
-        if i['ruleId'] not in excepted_ruleId:
-            if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
-                report_bad_ip(i)
-                reported_ip_list.append(i['clientIP'])
+        reported_ip_list = []
+        for i in ip_bad_list:
+            if i['ruleId'] not in excepted_ruleId:
+                if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
+                    report_bad_ip(i)
+                    reported_ip_list.append(i['clientIP'])
 
-    print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
+        print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
+    except KeyError as e:
+        print(f"Error: Missing expected key in Cloudflare API response: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error while processing firewall events: {e}", file=sys.stderr)
+        sys.exit(1)
 else:
-    print("No valid data received. Skipping IP reporting.")
+    print("Error: No valid data received from Cloudflare API. Exiting.", file=sys.stderr)
+    sys.exit(1)
 
 print("==================== End ====================")
