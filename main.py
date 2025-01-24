@@ -9,7 +9,7 @@ import time
 import os
 import hashlib
 import sys
-from datetime import datetime, timezone  # Updated import
+from datetime import datetime, timezone
 
 # Accessing environment variables
 CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID")
@@ -172,7 +172,6 @@ def hash_ip(ip):
     """
     Hashes the IP to avoid logging traceable information.
     """
-    # Updated to use timezone-aware datetime
     salt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
     combined_string = ip + salt + PEPPER
     hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
@@ -201,6 +200,12 @@ def report_bad_ip(it):
         if r.status_code == 200:
             # If response code 200, record a successfully reported IP
             print("Reported:", hash_ip(it['clientIP']))
+            try:
+                response_data = r.json()
+                print(json.dumps(response_data, indent=4))
+            except json.JSONDecodeError:
+                print("Error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
+                sys.exit(1)
         else:
             # Otherwise, print the status code as an error and exit
             print(f"Error: Failed to report IP {it['clientIP']} to AbuseIPDB. Status Code: {r.status_code}", file=sys.stderr)
