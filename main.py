@@ -9,7 +9,7 @@ import time
 import os
 import hashlib
 import sys
-from datetime import datetime
+from datetime import datetime, timezone  # Updated import
 
 # Accessing environment variables
 CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID")
@@ -123,6 +123,9 @@ def get_blocked_ip():
         response.raise_for_status()  # Raises HTTPError for bad HTTP status codes
         response_json = response.json()
 
+        # Temporary debug statement (optional)
+        # print("Full Cloudflare API Response:", json.dumps(response_json, indent=4))
+
         if not response_json:
             print("Error: Empty response received from Cloudflare API.", file=sys.stderr)
             sys.exit(1)
@@ -169,7 +172,8 @@ def hash_ip(ip):
     """
     Hashes the IP to avoid logging traceable information.
     """
-    salt = datetime.utcnow().strftime("%Y-%m-%dT%H")
+    # Updated to use timezone-aware datetime
+    salt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
     combined_string = ip + salt + PEPPER
     hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
     return hashed
