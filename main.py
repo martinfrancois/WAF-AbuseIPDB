@@ -127,13 +127,15 @@ def get_blocked_ip():
             print("Error: Empty response received from Cloudflare API.", file=sys.stderr)
             sys.exit(1)
 
-        if 'errors' in response_json:
+        # Check if 'errors' key exists and contains non-empty list
+        if 'errors' in response_json and response_json['errors']:
             print("Error: Cloudflare API returned errors:", file=sys.stderr)
             print(json.dumps(response_json['errors'], indent=4), file=sys.stderr)
             sys.exit(1)
 
+        # Ensure 'data' key exists
         if 'data' not in response_json:
-            print("Error: Unexpected response structure from Cloudflare API:", file=sys.stderr)
+            print("Error: 'data' key not found in Cloudflare API response.", file=sys.stderr)
             print(json.dumps(response_json, indent=4), file=sys.stderr)
             sys.exit(1)
 
@@ -191,7 +193,7 @@ def report_bad_ip(it):
         }
         # Send a POST request to the AbuseIPDB API with the required contents
         r = requests.post(url=url, headers=headers_abuse, params=params)
-        
+
         if r.status_code == 200:
             # If response code 200, record a successfully reported IP
             print("Reported:", hash_ip(it['clientIP']))
@@ -204,7 +206,7 @@ def report_bad_ip(it):
                     responseData = decodedResponse["data"]
                     responseData["ipAddress"] = hash_ip(responseData["ipAddress"])
                     print(json.dumps(responseData, sort_keys=True, indent=4), file=sys.stderr)
-                elif "errors" in decodedResponse:
+                elif "errors" in decodedResponse and decodedResponse["errors"]:
                     print("AbuseIPDB Errors:", json.dumps(decodedResponse["errors"], indent=4), file=sys.stderr)
                 else:
                     print("Unexpected response structure from AbuseIPDB:", json.dumps(decodedResponse, indent=4), file=sys.stderr)
