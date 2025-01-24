@@ -9,7 +9,7 @@ import time
 import os
 import hashlib
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # Updated import for timezone awareness
 
 # Accessing environment variables
 CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID")
@@ -123,9 +123,6 @@ def get_blocked_ip():
         response.raise_for_status()  # Raises HTTPError for bad HTTP status codes
         response_json = response.json()
 
-        # Temporary debug statement (optional)
-        # print("Full Cloudflare API Response:", json.dumps(response_json, indent=4))
-
         if not response_json:
             print("Error: Empty response received from Cloudflare API.", file=sys.stderr)
             sys.exit(1)
@@ -172,6 +169,7 @@ def hash_ip(ip):
     """
     Hashes the IP to avoid logging traceable information.
     """
+    # Use timezone-aware datetime
     salt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
     combined_string = ip + salt + PEPPER
     hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
@@ -179,7 +177,7 @@ def hash_ip(ip):
 
 def report_bad_ip(it):
     """
-    Reports a bad IP address to AbuseIPDB.
+    Reports a bad IP address to AbuseIPDB and logs the abuseConfidenceScore.
     Exits the script with status code 1 if reporting fails.
     """
     try:
@@ -199,28 +197,30 @@ def report_bad_ip(it):
 
         if r.status_code == 200:
             # If response code 200, record a successfully reported IP
-            print("Reported:", hash_ip(it['clientIP']))
+            hashed_ip = hash_ip(it['clientIP'])
+            print("reported:", hashed_ip)
             try:
-                response_data = r.json()
-                print(json.dumps(response_data, indent=4))
+                decodedResponse = r.json()
+                responseData = decodedResponse.get("data", {})
+                abuse_confidence_score = responseData.get("abuseConfidenceScore", "N/A")
+                print(json.dumps({
+                    "abuseConfidenceScore": abuse_confidence_score,
+                    "ipAddress": hashed_ip
+                }, indent=4))
             except json.JSONDecodeError:
                 print("Error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
                 sys.exit(1)
         else:
-            # Otherwise, print the status code as an error and exit
-            print(f"Error: Failed to report IP {it['clientIP']} to AbuseIPDB. Status Code: {r.status_code}", file=sys.stderr)
+            # Otherwise, print the status code as an error
+            print("error:", r.status_code)
             try:
                 decodedResponse = r.json()
-                if "data" in decodedResponse:
-                    responseData = decodedResponse["data"]
+                responseData = decodedResponse.get("data", {})
+                if "ipAddress" in responseData:
                     responseData["ipAddress"] = hash_ip(responseData["ipAddress"])
-                    print(json.dumps(responseData, sort_keys=True, indent=4), file=sys.stderr)
-                elif "errors" in decodedResponse and decodedResponse["errors"]:
-                    print("AbuseIPDB Errors:", json.dumps(decodedResponse["errors"], indent=4), file=sys.stderr)
-                else:
-                    print("Unexpected response structure from AbuseIPDB:", json.dumps(decodedResponse, indent=4), file=sys.stderr)
+                print(json.dumps(responseData, sort_keys=True, indent=4))
             except json.JSONDecodeError:
-                print("Error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
+                print("error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
             sys.exit(1)
 
     except requests.exceptions.RequestException as e:
