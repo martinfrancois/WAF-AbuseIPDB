@@ -194,8 +194,7 @@ def get_comment(it):
     """
     service = get_service_label(it.get("source"))
     return (
-        f"Blocked due to {service}. "
-        f"Unauthorized {it['clientRequestHTTPProtocol']} request, ignoring robots.txt: "
+        f"Unauthorized {it['clientRequestHTTPProtocol']} request blocked due to {service}, ignoring robots.txt: "
         f"(ASN: {it['clientAsn']}) "
         f"(Network: {it['clientASNDescription']}) "
         f"(Method: {it['clientRequestHTTPMethodName']}) "
@@ -278,4 +277,33 @@ excepted_ruleId = ["fa01280809254f82978e827892db4e46"]
 # Print start time and end time within output
 print("==================== Start ====================")
 print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
-print("
+print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
+
+# Fetch blocked IP data
+a = get_blocked_ip()
+
+# Process the fetched data if it's a valid dictionary with content
+if isinstance(a, dict) and a:
+    try:
+        ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
+        print(f"Number of firewall events fetched: {len(ip_bad_list)}")
+
+        reported_ip_list = []
+        for i in ip_bad_list:
+            if i['ruleId'] not in excepted_ruleId:
+                if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
+                    report_bad_ip(i)
+                    reported_ip_list.append(i['clientIP'])
+
+        print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
+    except KeyError as e:
+        print(f"Error: Missing expected key in Cloudflare API response: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error while processing firewall events: {e}", file=sys.stderr)
+        sys.exit(1)
+else:
+    print("Error: No valid data received from Cloudflare API. Exiting.", file=sys.stderr)
+    sys.exit(1)
+
+print("==================== End ====================")
