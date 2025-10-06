@@ -151,12 +151,52 @@ def get_blocked_ip():
         print(f"Unexpected error while fetching blocked IPs: {e}", file=sys.stderr)
         sys.exit(1)
 
+def get_service_label(source: str | None) -> str:
+    """
+    Map Cloudflare firewall event 'source' to the friendly 'Service' name
+    shown in the Security Events dashboard.
+    Falls back to a humanized version of the raw code.
+    """
+    if not source:
+        return "Unknown service"
+
+    mapping = {
+        "firewallmanaged": "Managed rules",
+        "firewallcustom": "Custom rules",
+        "firewallrules": "Custom rules",
+        "bic": "Browser Integrity Check",
+        "ratelimit": "Rate limiting",
+        "waf": "WAF (legacy managed rules)",
+        "botmanagement": "Bot Management",
+        "botfight": "Bot Fight Mode",
+        "apishield": "API Shield",
+        "apishieldschemavalidation": "API Shield schema validation",
+        "apishieldtokenvalidation": "API Shield token validation",
+        "apishieldsequencemitigation": "API Shield sequence mitigation",
+        "l7ddos": "HTTP DDoS protection",
+        "validation": "HTTP request validation",
+        "uablock": "User Agent Blocking",
+        "securitylevel": "Security Level",
+        "zonelockdown": "Zone Lockdown",
+        "asn": "IP Access rules (ASN)",
+        "country": "IP Access rules (Country)",
+        "ip": "IP Access rules (IP)",
+        "iprange": "IP Access rules (IP range)",
+        "hot": "HOT",
+    }
+
+    return mapping.get(source, source.replace("_", " ").title())
+
 def get_comment(it):
     """
     Generates a comment for the Bad IP Address report intended for AbuseIPDB.
+    Includes the Cloudflare security 'Service' that blocked the request.
     """
+    service = get_service_label(it.get("source"))
+    source_code = (it.get("source") or "").lower()
+    robots_hint = " ignoring robots.txt" if source_code in ("firewallcustom", "firewallrules") else ""
     return (
-        f"Unauthorized {it['clientRequestHTTPProtocol']} request, ignoring robots.txt: "
+        f"Unauthorized {it['clientRequestHTTPProtocol']} request blocked due to {service}{robots_hint}: "
         f"(ASN: {it['clientAsn']}) "
         f"(Network: {it['clientASNDescription']}) "
         f"(Method: {it['clientRequestHTTPMethodName']}) "
