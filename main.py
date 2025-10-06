@@ -196,9 +196,10 @@ def get_comment(it):
     """
     service = get_service_label(it.get("source"))
     source_code = (it.get("source") or "").lower()
-    robots_hint = " ignoring robots.txt" if source_code in ("firewallcustom", "firewallrules") else ""
+    robots_hint = "; requester ignored robots.txt" if source_code in ("firewallcustom", "firewallrules") else ""
     return (
-        f"Unauthorized {it['clientRequestHTTPProtocol']} request blocked due to {service}{robots_hint}: "
+        f"Unauthorized {it['clientRequestHTTPProtocol']} {it['clientRequestHTTPMethodName']} {it['clientRequestPath']} "
+        f"blocked by {service}{robots_hint}: "
         f"(ASN: {it['clientAsn']}) "
         f"(Network: {it['clientASNDescription']}) "
         f"(Method: {it['clientRequestHTTPMethodName']}) "
