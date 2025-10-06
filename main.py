@@ -160,6 +160,8 @@ def get_service_label(source: str | None) -> str:
     if not source:
         return "Unknown service"
 
+    key = source.strip().lower()  # normalize case for mapping
+
     mapping = {
         "firewallmanaged": "Managed rules",
         "firewallcustom": "Custom rules",
@@ -185,7 +187,7 @@ def get_service_label(source: str | None) -> str:
         "hot": "HOT",
     }
 
-    return mapping.get(source, source.replace("_", " ").title())
+    return mapping.get(key, key.replace("_", " ").title())
 
 def get_comment(it):
     """
