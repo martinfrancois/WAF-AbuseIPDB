@@ -191,21 +191,21 @@ def get_service_label(source: str | None) -> str:
 
 def get_comment(it):
     """
-    Generates a comment for the Bad IP Address report intended for AbuseIPDB.
-    Includes the Cloudflare security 'Service' that blocked the request.
+    Generates a short AbuseIPDB comment like:
+    'Unauthorized HTTP/1.1 GET /admin blocked by Custom rules; requester ignored robots.txt'
+    Only appends the robots.txt clause for Custom rules / Firewall rules.
     """
     service = get_service_label(it.get("source"))
+    protocol = it.get("clientRequestHTTPProtocol", "?")
+    method = it.get("clientRequestHTTPMethodName", "?")
+    path = it.get("clientRequestPath") or "/"
+    query = it.get("clientRequestQuery")
+    path_q = f"{path}?{query}" if query else path
+
     source_code = (it.get("source") or "").lower()
-    robots_hint = " ignoring robots.txt" if source_code in ("firewallcustom", "firewallrules") else ""
-    return (
-        f"Unauthorized {it['clientRequestHTTPProtocol']} request blocked due to {service}{robots_hint}: "
-        f"(ASN: {it['clientAsn']}) "
-        f"(Network: {it['clientASNDescription']}) "
-        f"(Method: {it['clientRequestHTTPMethodName']}) "
-        f"(Path: {it['clientRequestPath']}) "
-        f"(Query: {it['clientRequestQuery']}) "
-        f"(User Agent: {it['userAgent']})"
-    )
+    robots_clause = "; requester ignored robots.txt" if source_code in ("firewallcustom", "firewallrules") else ""
+
+    return f"Unauthorized {protocol} {method} {path_q} blocked by {service}{robots_clause}"
 
 def hash_ip(ip):
     """
