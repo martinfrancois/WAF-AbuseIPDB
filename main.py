@@ -151,11 +151,50 @@ def get_blocked_ip():
         print(f"Unexpected error while fetching blocked IPs: {e}", file=sys.stderr)
         sys.exit(1)
 
+def get_service_label(source: str | None) -> str:
+    """
+    Map Cloudflare firewall event 'source' to the friendly 'Service' name
+    shown in the Security Events dashboard.
+    Falls back to a humanized version of the raw code.
+    """
+    if not source:
+        return "Unknown service"
+
+    mapping = {
+        "firewallmanaged": "Managed rules",
+        "firewallcustom": "Custom rules",
+        "firewallrules": "Custom rules",
+        "bic": "Browser Integrity Check",
+        "ratelimit": "Rate limiting",
+        "waf": "WAF (legacy managed rules)",
+        "botmanagement": "Bot Management",
+        "botfight": "Bot Fight Mode",
+        "apishield": "API Shield",
+        "apishieldschemavalidation": "API Shield schema validation",
+        "apishieldtokenvalidation": "API Shield token validation",
+        "apishieldsequencemitigation": "API Shield sequence mitigation",
+        "l7ddos": "HTTP DDoS protection",
+        "validation": "HTTP request validation",
+        "uablock": "User Agent Blocking",
+        "securitylevel": "Security Level",
+        "zonelockdown": "Zone Lockdown",
+        "asn": "IP Access rules (ASN)",
+        "country": "IP Access rules (Country)",
+        "ip": "IP Access rules (IP)",
+        "iprange": "IP Access rules (IP range)",
+        "hot": "HOT",
+    }
+
+    return mapping.get(source, source.replace("_", " ").title())
+
 def get_comment(it):
     """
     Generates a comment for the Bad IP Address report intended for AbuseIPDB.
+    Includes the Cloudflare security 'Service' that blocked the request.
     """
+    service = get_service_label(it.get("source"))
     return (
+        f"Blocked due to {service}. "
         f"Unauthorized {it['clientRequestHTTPProtocol']} request, ignoring robots.txt: "
         f"(ASN: {it['clientAsn']}) "
         f"(Network: {it['clientASNDescription']}) "
@@ -239,33 +278,4 @@ excepted_ruleId = ["fa01280809254f82978e827892db4e46"]
 # Print start time and end time within output
 print("==================== Start ====================")
 print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
-print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
-
-# Fetch blocked IP data
-a = get_blocked_ip()
-
-# Process the fetched data if it's a valid dictionary with content
-if isinstance(a, dict) and a:
-    try:
-        ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
-        print(f"Number of firewall events fetched: {len(ip_bad_list)}")
-
-        reported_ip_list = []
-        for i in ip_bad_list:
-            if i['ruleId'] not in excepted_ruleId:
-                if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
-                    report_bad_ip(i)
-                    reported_ip_list.append(i['clientIP'])
-
-        print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
-    except KeyError as e:
-        print(f"Error: Missing expected key in Cloudflare API response: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error while processing firewall events: {e}", file=sys.stderr)
-        sys.exit(1)
-else:
-    print("Error: No valid data received from Cloudflare API. Exiting.", file=sys.stderr)
-    sys.exit(1)
-
-print("==================== End ====================")
+print("
