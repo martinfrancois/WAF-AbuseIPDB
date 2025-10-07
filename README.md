@@ -4,11 +4,11 @@
 
 This is a Python script that queries Cloudflare's firewall event logs and reports any potentially malicious IP addresses to AbuseIPDB, a database that tracks IPs associated with malicious activities.
 
-The script first imports several libraries: `json`, `requests`, `time`, `os`, `hashlib`, and `datetime`.
+The script first imports several libraries: `json`, `httpx`, `time`, `os`, `hashlib`, and `datetime`.
 
 `json` is used for encoding and decoding JSON data, which is used by the Cloudflare and AbuseIPDB APIs.
 
-`requests` is used to make HTTP requests to the Cloudflare and AbuseIPDB APIs.
+`httpx` is used to make HTTP requests to the Cloudflare and AbuseIPDB APIs.
 
 `time` is used to get the current time and format it for use in the query payload.
 

@@ -4,7 +4,7 @@
 
 # Importing required libraries
 import json
-import requests
+import httpx
 import time
 import os
 import hashlib
@@ -119,7 +119,11 @@ def get_blocked_ip():
         sys.exit(1)
     try:
         # Send a POST request to the Cloudflare API with the defined headers and PAYLOAD data
-        response = requests.post("https://api.cloudflare.com/client/v4/graphql/", headers=headers, data=PAYLOAD)
+        response = httpx.post(
+            "https://api.cloudflare.com/client/v4/graphql/",
+            headers=headers,
+            content=PAYLOAD,
+        )
         response.raise_for_status()  # Raises HTTPError for bad HTTP status codes
         response_json = response.json()
 
@@ -141,7 +145,7 @@ def get_blocked_ip():
 
         return response_json
 
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         print(f"Error: Failed to connect to Cloudflare API: {e}", file=sys.stderr)
         sys.exit(1)
     except json.JSONDecodeError:
@@ -236,7 +240,7 @@ def report_bad_ip(it):
             'Key': ABUSEIPDB_API_KEY
         }
         # Send a POST request to the AbuseIPDB API with the required contents
-        r = requests.post(url=url, headers=headers_abuse, params=params)
+        r = httpx.post(url=url, headers=headers_abuse, params=params)
 
         if r.status_code == 200:
             # If response code 200, record a successfully reported IP
@@ -266,7 +270,7 @@ def report_bad_ip(it):
                 print("error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
             sys.exit(1)
 
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         print(f"Error: Failed to connect to AbuseIPDB API: {e}", file=sys.stderr)
         sys.exit(1)
     except json.JSONDecodeError:
