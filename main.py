@@ -5,11 +5,12 @@
 # Importing required libraries
 import json
 import requests
-import time
 import os
 import hashlib
 import sys
 from datetime import datetime, timezone  # Updated import for timezone awareness
+
+from time_window import build_time_window
 
 # Accessing environment variables
 CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID")
@@ -36,9 +37,11 @@ def array_from_string(input_string):
     """Converts a comma-delimited string into a list."""
     return [ip.strip() for ip in input_string.split(',')] if input_string else []
 
-# Define the time range for fetching firewall events
-rangeFrom = time.localtime(time.time() - 60 * 60 * 2.5)  # 2.5 hours ago
-rangeUntil = time.localtime(time.time())  # Current time
+# Define the time range for fetching firewall events. The workflow uses a
+# five-hour window for each two-hour run, preserving overlap if one run is
+# delayed or missed.
+LOOKBACK_HOURS = float(os.environ.get("LOOKBACK_HOURS", "2.5"))
+rangeFrom, rangeUntil = build_time_window(datetime.now(timezone.utc), LOOKBACK_HOURS)
 ignored_ip_addresses = array_from_string(IGNORED_IP_ADDRESSES)
 
 # Set payload for Cloudflare API requests with corrected GraphQL query
@@ -73,8 +76,8 @@ PAYLOAD = {
     "variables": {
         "zoneTag": CLOUDFLARE_ZONE_ID,
         "filter": {
-            "datetime_geq": time.strftime("%Y-%m-%dT%H:%M:%SZ", rangeFrom),
-            "datetime_leq": time.strftime("%Y-%m-%dT%H:%M:%SZ", rangeUntil),
+            "datetime_geq": rangeFrom,
+            "datetime_leq": rangeUntil,
             "AND": [
                 {"action_neq": "allow"},
                 {"action_neq": "skip"},
@@ -281,8 +284,8 @@ excepted_ruleId = ["fa01280809254f82978e827892db4e46"]
 
 # Print start time and end time within output
 print("==================== Start ====================")
-print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
-print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
+print("Events from:  " + rangeFrom)
+print("Events until: " + rangeUntil)
 
 # Fetch blocked IP data
 a = get_blocked_ip()

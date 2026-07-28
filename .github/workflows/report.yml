@@ -1,15 +1,18 @@
 name: Report
 on:
-  push:
   schedule:
-    - cron: '15 * * * *'
-  watch:
-    types: [started]
+    # A five-hour query window keeps coverage if one two-hour run is missed.
+    - cron: '15 */2 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   build:
     if: github.repository == 'martinfrancois/WAF-AbuseIPDB'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
     - name: Checkout
       uses: actions/checkout@main
@@ -19,9 +22,12 @@ jobs:
         python-version: 3.12
     - name: Install requirements
       run: pip install -r requirements.txt
+    - name: Test
+      run: python -m unittest -v
     - name: Report
       run: python main.py
       env:
+        LOOKBACK_HOURS: 5
         CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
         CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
