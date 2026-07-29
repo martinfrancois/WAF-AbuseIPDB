@@ -28,7 +28,7 @@ The script defines a function `hash_ip` that takes an ip address, concatenates i
 Then it hashes that with SHA3-256 and returns the hash in hexadecimal format as a string.
 This avoids having IP addresses in plaintext in the logs, while still allowing to trace the ip addresses for debugging purposes.
 
-The script defines a function `report_bad_ip` that takes a dictionary containing information about a potentially malicious IP address, constructs a payload containing the IP address and associated details, and sends the payload to the AbuseIPDB API to report the IP address as potentially malicious.
+The script defines a function `report_bad_ip` that takes a dictionary containing information about a potentially malicious IP address, selects AbuseIPDB categories from the Cloudflare event source, request path, query, method, and user agent, constructs a payload containing the IP address and associated details, and sends the payload to the AbuseIPDB API to report the IP address as potentially malicious.
 
 The script prints a message indicating that it has started, the current time and the earliest time it considers events from. It then calls the `get_blocked_ip` function to retrieve a list of potentially malicious IP addresses from Cloudflare's firewall event logs. If the function returns a non-empty list, the script calls the `report_bad_ip` function for each IP address in the list, excluding any IP addresses associated with a specific rule ID or ignored by `IGNORED_IP_ADDRESSES`. The script prints a message indicating the number of potentially malicious IP addresses found in the event logs.
 
