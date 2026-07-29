@@ -5,6 +5,7 @@
 # Importing required libraries
 import json
 import httpx
+import re
 import time
 import os
 import hashlib
@@ -212,6 +213,155 @@ def get_comment(it):
         f"(User Agent: {it['userAgent']})"
     )
 
+ABUSEIPDB_CATEGORY = {
+    "DDOS_ATTACK": "4",
+    "HACKING": "15",
+    "SQL_INJECTION": "16",
+    "BRUTE_FORCE": "18",
+    "BAD_WEB_BOT": "19",
+    "WEB_APP_ATTACK": "21",
+}
+
+SQL_INJECTION_PATTERNS = (
+    r"\bunion\s+(?:all\s+)?select\b",
+    r"\binformation_schema\b",
+    r"\bsleep\s*\(",
+    r"\bbenchmark\s*\(",
+    r"(?:'|%27|\")\s*(?:or|and)\s+(?:'?\w+'?\s*=\s*'?\w+'?|[0-9]+\s*=\s*[0-9]+)",
+)
+
+WEB_APP_PROBE_MARKERS = (
+    ".env",
+    "/.git/",
+    "wp-config",
+    "wp-login.php",
+    "xmlrpc.php",
+    "wp-json",
+    "wp-admin",
+    "wp-content",
+    "/wp/",
+    "/wordpress/",
+    "/cms/",
+    "/blog/",
+    "/site/",
+    "rest_route=/",
+    "phpmyadmin",
+    "/admin",
+    "/administrator",
+    "/control",
+    "/settings",
+    "/server/",
+    "/config",
+    "/backup",
+    "/debug",
+    "/vendor/phpunit",
+    "etc/passwd",
+    "../",
+    "%2e%2e%2f",
+)
+
+LOGIN_PATH_MARKERS = (
+    "login",
+    "signin",
+    "sign-in",
+    "auth",
+    "session",
+    "wp-login.php",
+    "xmlrpc.php",
+)
+
+BOT_USER_AGENT_MARKERS = (
+    "scrapy",
+    "curl",
+    "wget",
+    "python-requests",
+    "python-httpx",
+    "go-http-client",
+    "masscan",
+    "nikto",
+    "sqlmap",
+)
+
+KNOWN_CRAWLER_USER_AGENT_MARKERS = (
+    "bingbot",
+    "googlebot",
+    "gptbot",
+    "chatgpt-user",
+    "xai-searchbot",
+)
+
+
+def _event_text(it):
+    return " ".join(
+        str(it.get(field) or "")
+        for field in ("clientRequestPath", "clientRequestQuery", "userAgent")
+    ).lower()
+
+
+def _matches_any_regex(patterns, text):
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _contains_any(markers, text):
+    return any(marker in text for marker in markers)
+
+
+def _is_known_crawler(user_agent):
+    return _contains_any(KNOWN_CRAWLER_USER_AGENT_MARKERS, user_agent)
+
+
+def get_categories(it):
+    """
+    Select AbuseIPDB categories from the Cloudflare event evidence.
+
+    AbuseIPDB accepts multiple comma-separated category IDs, but broad reports
+    are less useful. Keep this conservative and prefer one generic fallback
+    over guessing several specific categories.
+    """
+    source = (it.get("source") or "").strip().lower()
+    method = (it.get("clientRequestHTTPMethodName") or "").strip().upper()
+    path = (it.get("clientRequestPath") or "").lower()
+    user_agent = (it.get("userAgent") or "").lower()
+    text = _event_text(it)
+
+    categories = set()
+
+    if source == "l7ddos":
+        categories.add(ABUSEIPDB_CATEGORY["DDOS_ATTACK"])
+
+    if source in {"botmanagement", "botfight", "bic", "uablock"} or (
+        not _is_known_crawler(user_agent)
+        and _contains_any(BOT_USER_AGENT_MARKERS, user_agent)
+    ):
+        categories.add(ABUSEIPDB_CATEGORY["BAD_WEB_BOT"])
+
+    if source in {
+        "apishield",
+        "apishieldschemavalidation",
+        "apishieldtokenvalidation",
+        "apishieldsequencemitigation",
+        "firewallmanaged",
+        "validation",
+        "waf",
+    }:
+        categories.add(ABUSEIPDB_CATEGORY["WEB_APP_ATTACK"])
+
+    if _matches_any_regex(SQL_INJECTION_PATTERNS, text):
+        categories.add(ABUSEIPDB_CATEGORY["SQL_INJECTION"])
+        categories.add(ABUSEIPDB_CATEGORY["WEB_APP_ATTACK"])
+
+    if _contains_any(WEB_APP_PROBE_MARKERS, text):
+        categories.add(ABUSEIPDB_CATEGORY["WEB_APP_ATTACK"])
+
+    if method == "POST" and _contains_any(LOGIN_PATH_MARKERS, path):
+        categories.add(ABUSEIPDB_CATEGORY["BRUTE_FORCE"])
+        categories.add(ABUSEIPDB_CATEGORY["WEB_APP_ATTACK"])
+
+    if not categories:
+        categories.add(ABUSEIPDB_CATEGORY["HACKING"])
+
+    return ",".join(sorted(categories, key=int))
+
 def hash_ip(ip):
     """
     Hashes the IP to avoid logging traceable information.
@@ -229,9 +379,10 @@ def report_bad_ip(it):
     """
     try:
         url = 'https://api.abuseipdb.com/api/v2/report'
+        categories = get_categories(it)
         params = {
             'ip': it['clientIP'],
-            'categories': '14,15,16,19,20,21',
+            'categories': categories,
             'comment': get_comment(it),
             'timestamp': it['datetime']
         }
@@ -246,6 +397,7 @@ def report_bad_ip(it):
             # If response code 200, record a successfully reported IP
             hashed_ip = hash_ip(it['clientIP'])
             print("reported:", hashed_ip)
+            print("categories:", categories)
             try:
                 decodedResponse = r.json()
                 responseData = decodedResponse.get("data", {})
@@ -283,36 +435,40 @@ def report_bad_ip(it):
 # Define a list of excluded Cloudflare WAF Rule IDs
 excepted_ruleId = ["fa01280809254f82978e827892db4e46"]
 
-# Print start time and end time within output
-print("==================== Start ====================")
-print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
-print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
+def main():
+    # Print start time and end time within output
+    print("==================== Start ====================")
+    print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
+    print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
 
-# Fetch blocked IP data
-a = get_blocked_ip()
+    # Fetch blocked IP data
+    a = get_blocked_ip()
 
-# Process the fetched data if it's a valid dictionary with content
-if isinstance(a, dict) and a:
-    try:
-        ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
-        print(f"Number of firewall events fetched: {len(ip_bad_list)}")
+    # Process the fetched data if it's a valid dictionary with content
+    if isinstance(a, dict) and a:
+        try:
+            ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
+            print(f"Number of firewall events fetched: {len(ip_bad_list)}")
 
-        reported_ip_list = []
-        for i in ip_bad_list:
-            if i['ruleId'] not in excepted_ruleId:
-                if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
-                    report_bad_ip(i)
-                    reported_ip_list.append(i['clientIP'])
+            reported_ip_list = []
+            for i in ip_bad_list:
+                if i['ruleId'] not in excepted_ruleId:
+                    if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
+                        report_bad_ip(i)
+                        reported_ip_list.append(i['clientIP'])
 
-        print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
-    except KeyError as e:
-        print(f"Error: Missing expected key in Cloudflare API response: {e}", file=sys.stderr)
+            print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
+        except KeyError as e:
+            print(f"Error: Missing expected key in Cloudflare API response: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Unexpected error while processing firewall events: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("Error: No valid data received from Cloudflare API. Exiting.", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error while processing firewall events: {e}", file=sys.stderr)
-        sys.exit(1)
-else:
-    print("Error: No valid data received from Cloudflare API. Exiting.", file=sys.stderr)
-    sys.exit(1)
 
-print("==================== End ====================")
+    print("==================== End ====================")
+
+if __name__ == "__main__":
+    main()
