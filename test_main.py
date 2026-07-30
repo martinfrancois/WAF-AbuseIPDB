@@ -487,6 +487,12 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("boom", stderr.getvalue())
 
+    def test_main_returns_success_when_reports_were_sent(self):
+        with mock.patch("main.run", return_value=2):
+            exit_code = main.main(CONFIG_ENV)
+
+        self.assertEqual(exit_code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -514,7 +514,8 @@ def run(
 
 def main(environ: dict[str, str] | None = None) -> int:
     try:
-        return run(Config.from_env(environ))
+        run(Config.from_env(environ))
+        return 0
     except (ConfigError, ApiError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
