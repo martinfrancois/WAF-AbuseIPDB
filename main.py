@@ -1,217 +1,67 @@
-# This code was documented by the BeeHive Team, to help those seeking to learn.
-# This documentation does not impact the function of the code.
-# Please do not remove it, so that users who reuse or find this can learn.
-
-# Importing required libraries
-import json
-import httpx
-import re
-import time
-import os
 import hashlib
+import json
+import os
+import re
 import sys
-from datetime import datetime, timezone  # Updated import for timezone awareness
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, TextIO
 
-# Accessing environment variables
-CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID")
-CLOUDFLARE_EMAIL = os.environ.get("CLOUDFLARE_EMAIL")
-CLOUDFLARE_API_KEY = os.environ.get("CLOUDFLARE_API_KEY")
-ABUSEIPDB_API_KEY = os.environ.get("ABUSEIPDB_API_KEY")
-PEPPER = os.environ.get("PEPPER", "")
-IGNORED_IP_ADDRESSES = os.environ.get("IGNORED_IP_ADDRESSES", "")  # string of IP addresses delimited by a comma
+import httpx
 
-# Validate essential environment variables
-essential_vars = {
-    "CLOUDFLARE_ZONE_ID": CLOUDFLARE_ZONE_ID,
-    "CLOUDFLARE_EMAIL": CLOUDFLARE_EMAIL,
-    "CLOUDFLARE_API_KEY": CLOUDFLARE_API_KEY,
-    "ABUSEIPDB_API_KEY": ABUSEIPDB_API_KEY
-}
+CLOUDFLARE_GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql/"
+ABUSEIPDB_REPORT_URL = "https://api.abuseipdb.com/api/v2/report"
+REPORT_LOOKBACK = timedelta(hours=2, minutes=30)
 
-missing_vars = [var for var, value in essential_vars.items() if not value]
-if missing_vars:
-    print(f"Error: Missing essential environment variables: {', '.join(missing_vars)}", file=sys.stderr)
-    sys.exit(1)
-
-def array_from_string(input_string):
-    """Converts a comma-delimited string into a list."""
-    return [ip.strip() for ip in input_string.split(',')] if input_string else []
-
-# Define the time range for fetching firewall events
-rangeFrom = time.localtime(time.time() - 60 * 60 * 2.5)  # 2.5 hours ago
-rangeUntil = time.localtime(time.time())  # Current time
-ignored_ip_addresses = array_from_string(IGNORED_IP_ADDRESSES)
-
-# Set payload for Cloudflare API requests with corrected GraphQL query
-PAYLOAD = {
-    "query": """query ListFirewallEvents($zoneTag: String!, $filter: FirewallEventsAdaptiveFilter_InputObject!) {
-        viewer {
-            zones(filter: { zoneTag: $zoneTag }) {
-                firewallEventsAdaptive(
-                    filter: $filter
-                    limit: 2500
-                    orderBy: [datetime_DESC]
-                ) {
-                    action
-                    clientASNDescription
-                    clientAsn
-                    clientCountryName
-                    clientIP
-                    clientRequestHTTPHost
-                    clientRequestHTTPMethodName
-                    clientRequestHTTPProtocol
-                    clientRequestPath
-                    clientRequestQuery
-                    datetime
-                    rayName
-                    ruleId
-                    source
-                    userAgent
-                }
+CLOUDFLARE_QUERY = """
+query ListFirewallEvents(
+    $zoneTag: String!
+    $filter: FirewallEventsAdaptiveFilter_InputObject!
+) {
+    viewer {
+        zones(filter: { zoneTag: $zoneTag }) {
+            firewallEventsAdaptive(
+                filter: $filter
+                limit: 2500
+                orderBy: [datetime_DESC]
+            ) {
+                action
+                clientASNDescription
+                clientAsn
+                clientCountryName
+                clientIP
+                clientRequestHTTPHost
+                clientRequestHTTPMethodName
+                clientRequestHTTPProtocol
+                clientRequestPath
+                clientRequestQuery
+                datetime
+                rayName
+                ruleId
+                source
+                userAgent
             }
         }
-    }""",
-    "variables": {
-        "zoneTag": CLOUDFLARE_ZONE_ID,
-        "filter": {
-            "datetime_geq": time.strftime("%Y-%m-%dT%H:%M:%SZ", rangeFrom),
-            "datetime_leq": time.strftime("%Y-%m-%dT%H:%M:%SZ", rangeUntil),
-            "AND": [
-                {"action_neq": "allow"},
-                {"action_neq": "skip"},
-                {"action_neq": "challenge_solved"},
-                {"action_neq": "challenge_failed"},
-                {"action_neq": "challenge_bypassed"},
-                {"action_neq": "jschallenge_solved"},
-                {"action_neq": "jschallenge_failed"},
-                {"action_neq": "jschallenge_bypassed"},
-                {"action_neq": "managed_challenge_skipped"},
-                {"action_neq": "managed_challenge_non_interactive_solved"},
-                {"action_neq": "managed_challenge_interactive_solved"},
-                {"action_neq": "managed_challenge_bypassed"},
-            ]
-        }
     }
-}
+}"""
 
-# Convert PAYLOAD dictionary to a JSON string
-PAYLOAD = json.dumps(PAYLOAD)
+EXCLUDED_ACTIONS = (
+    "allow",
+    "skip",
+    "challenge_solved",
+    "challenge_failed",
+    "challenge_bypassed",
+    "jschallenge_solved",
+    "jschallenge_failed",
+    "jschallenge_bypassed",
+    "managed_challenge_skipped",
+    "managed_challenge_non_interactive_solved",
+    "managed_challenge_interactive_solved",
+    "managed_challenge_bypassed",
+)
 
-# Define headers for the API request
-headers = {
-    "Content-Type": "application/json",
-    "X-Auth-Key": CLOUDFLARE_API_KEY,
-    "X-Auth-Email": CLOUDFLARE_EMAIL
-}
-
-# Set the initial time to live value to 60
-ttl = 60
-
-def get_blocked_ip():
-    """
-    Retrieves blocked IP addresses from Cloudflare's GraphQL API.
-    Exits the script with status code 1 if it fails to fetch data.
-    """
-    global ttl
-    ttl -= 1
-    print("ttl:", ttl)
-    if ttl <= 0:
-        print("TTL expired. Exiting script due to repeated failures.", file=sys.stderr)
-        sys.exit(1)
-    try:
-        # Send a POST request to the Cloudflare API with the defined headers and PAYLOAD data
-        response = httpx.post(
-            "https://api.cloudflare.com/client/v4/graphql/",
-            headers=headers,
-            content=PAYLOAD,
-        )
-        response.raise_for_status()  # Raises HTTPError for bad HTTP status codes
-        response_json = response.json()
-
-        if not response_json:
-            print("Error: Empty response received from Cloudflare API.", file=sys.stderr)
-            sys.exit(1)
-
-        # Check if 'errors' key exists and contains non-empty list
-        if 'errors' in response_json and response_json['errors']:
-            print("Error: Cloudflare API returned errors:", file=sys.stderr)
-            print(json.dumps(response_json['errors'], indent=4), file=sys.stderr)
-            sys.exit(1)
-
-        # Ensure 'data' key exists
-        if 'data' not in response_json:
-            print("Error: 'data' key not found in Cloudflare API response.", file=sys.stderr)
-            print(json.dumps(response_json, indent=4), file=sys.stderr)
-            sys.exit(1)
-
-        return response_json
-
-    except httpx.RequestError as e:
-        print(f"Error: Failed to connect to Cloudflare API: {e}", file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print("Error: Failed to decode JSON response from Cloudflare API.", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error while fetching blocked IPs: {e}", file=sys.stderr)
-        sys.exit(1)
-
-def get_service_label(source: str | None) -> str:
-    """
-    Map Cloudflare firewall event 'source' to the friendly 'Service' name
-    shown in the Security Events dashboard.
-    Falls back to a humanized version of the raw code.
-    """
-    if not source:
-        return "Unknown service"
-
-    key = source.strip().lower()  # normalize case for mapping
-
-    mapping = {
-        "firewallmanaged": "Managed rules",
-        "firewallcustom": "Custom rules",
-        "firewallrules": "Custom rules",
-        "bic": "Browser Integrity Check",
-        "ratelimit": "Rate limiting",
-        "waf": "WAF (legacy managed rules)",
-        "botmanagement": "Bot Management",
-        "botfight": "Bot Fight Mode",
-        "apishield": "API Shield",
-        "apishieldschemavalidation": "API Shield schema validation",
-        "apishieldtokenvalidation": "API Shield token validation",
-        "apishieldsequencemitigation": "API Shield sequence mitigation",
-        "l7ddos": "HTTP DDoS protection",
-        "validation": "HTTP request validation",
-        "uablock": "User Agent Blocking",
-        "securitylevel": "Security Level",
-        "zonelockdown": "Zone Lockdown",
-        "asn": "IP Access rules (ASN)",
-        "country": "IP Access rules (Country)",
-        "ip": "IP Access rules (IP)",
-        "iprange": "IP Access rules (IP range)",
-        "hot": "HOT",
-    }
-
-    return mapping.get(key, key.replace("_", " ").title())
-
-def get_comment(it):
-    """
-    Generates a comment for the Bad IP Address report intended for AbuseIPDB.
-    Includes the Cloudflare security 'Service' that blocked the request.
-    """
-    service = get_service_label(it.get("source"))
-    source_code = (it.get("source") or "").lower()
-    robots_hint = "; requester ignored robots.txt" if source_code in ("firewallcustom", "firewallrules") else ""
-    return (
-        f"Unauthorized {it['clientRequestHTTPProtocol']} {it['clientRequestHTTPMethodName']} {it['clientRequestPath']} "
-        f"blocked by {service}{robots_hint}: "
-        f"(ASN: {it['clientAsn']}) "
-        f"(Network: {it['clientASNDescription']}) "
-        f"(Method: {it['clientRequestHTTPMethodName']}) "
-        f"(Path: {it['clientRequestPath']}) "
-        f"(Query: {it['clientRequestQuery']}) "
-        f"(User Agent: {it['userAgent']})"
-    )
+EXCEPTED_RULE_IDS = ("fa01280809254f82978e827892db4e46",)
 
 ABUSEIPDB_CATEGORY = {
     "DDOS_ATTACK": "4",
@@ -291,38 +141,212 @@ KNOWN_CRAWLER_USER_AGENT_MARKERS = (
 )
 
 
-def _event_text(it):
+class ConfigError(ValueError):
+    pass
+
+
+class ApiError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class Config:
+    cloudflare_zone_id: str
+    cloudflare_email: str
+    cloudflare_api_key: str
+    abuseipdb_api_key: str
+    pepper: str = ""
+    ignored_ip_addresses: tuple[str, ...] = ()
+
+    @classmethod
+    def from_env(cls, environ: dict[str, str] | None = None) -> "Config":
+        values = os.environ if environ is None else environ
+        required = {
+            "CLOUDFLARE_ZONE_ID": values.get("CLOUDFLARE_ZONE_ID"),
+            "CLOUDFLARE_EMAIL": values.get("CLOUDFLARE_EMAIL"),
+            "CLOUDFLARE_API_KEY": values.get("CLOUDFLARE_API_KEY"),
+            "ABUSEIPDB_API_KEY": values.get("ABUSEIPDB_API_KEY"),
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ConfigError(
+                f"Missing essential environment variables: {', '.join(missing)}"
+            )
+
+        return cls(
+            cloudflare_zone_id=required["CLOUDFLARE_ZONE_ID"] or "",
+            cloudflare_email=required["CLOUDFLARE_EMAIL"] or "",
+            cloudflare_api_key=required["CLOUDFLARE_API_KEY"] or "",
+            abuseipdb_api_key=required["ABUSEIPDB_API_KEY"] or "",
+            pepper=values.get("PEPPER", ""),
+            ignored_ip_addresses=tuple(
+                array_from_string(values.get("IGNORED_IP_ADDRESSES", ""))
+            ),
+        )
+
+
+def array_from_string(input_string: str) -> list[str]:
+    return [value.strip() for value in input_string.split(",") if value.strip()]
+
+
+def utc_time_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    until = now or datetime.now(UTC)
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=UTC)
+    return until - REPORT_LOOKBACK, until
+
+
+def cloudflare_datetime(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def build_cloudflare_payload(
+    config: Config, range_from: datetime, range_until: datetime
+) -> dict[str, Any]:
+    return {
+        "query": CLOUDFLARE_QUERY,
+        "variables": {
+            "zoneTag": config.cloudflare_zone_id,
+            "filter": {
+                "datetime_geq": cloudflare_datetime(range_from),
+                "datetime_leq": cloudflare_datetime(range_until),
+                "AND": [{"action_neq": action} for action in EXCLUDED_ACTIONS],
+            },
+        },
+    }
+
+
+def cloudflare_headers(config: Config) -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "X-Auth-Key": config.cloudflare_api_key,
+        "X-Auth-Email": config.cloudflare_email,
+    }
+
+
+def validate_cloudflare_response(response_json: dict[str, Any]) -> dict[str, Any]:
+    if not response_json:
+        raise ApiError("Empty response received from Cloudflare API.")
+    if response_json.get("errors"):
+        raise ApiError(
+            "Cloudflare API returned errors: "
+            + json.dumps(response_json["errors"], indent=4)
+        )
+    if "data" not in response_json:
+        raise ApiError(
+            "'data' key not found in Cloudflare API response: "
+            + json.dumps(response_json, indent=4)
+        )
+    return response_json
+
+
+def get_blocked_ip(
+    config: Config,
+    range_from: datetime,
+    range_until: datetime,
+    post: Callable[..., httpx.Response] = httpx.post,
+) -> dict[str, Any]:
+    try:
+        response = post(
+            CLOUDFLARE_GRAPHQL_URL,
+            headers=cloudflare_headers(config),
+            json=build_cloudflare_payload(config, range_from, range_until),
+        )
+        response.raise_for_status()
+        return validate_cloudflare_response(response.json())
+    except httpx.HTTPError as exc:
+        raise ApiError(f"Failed to connect to Cloudflare API: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ApiError("Failed to decode JSON response from Cloudflare API.") from exc
+
+
+def extract_firewall_events(response_json: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        events = response_json["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ApiError(f"Missing expected key in Cloudflare API response: {exc}") from exc
+    if not isinstance(events, list):
+        raise ApiError("Cloudflare firewall events response is not a list.")
+    return events
+
+
+def get_service_label(source: str | None) -> str:
+    if not source:
+        return "Unknown service"
+
+    mapping = {
+        "firewallmanaged": "Managed rules",
+        "firewallcustom": "Custom rules",
+        "firewallrules": "Custom rules",
+        "bic": "Browser Integrity Check",
+        "ratelimit": "Rate limiting",
+        "waf": "WAF (legacy managed rules)",
+        "botmanagement": "Bot Management",
+        "botfight": "Bot Fight Mode",
+        "apishield": "API Shield",
+        "apishieldschemavalidation": "API Shield schema validation",
+        "apishieldtokenvalidation": "API Shield token validation",
+        "apishieldsequencemitigation": "API Shield sequence mitigation",
+        "l7ddos": "HTTP DDoS protection",
+        "validation": "HTTP request validation",
+        "uablock": "User Agent Blocking",
+        "securitylevel": "Security Level",
+        "zonelockdown": "Zone Lockdown",
+        "asn": "IP Access rules (ASN)",
+        "country": "IP Access rules (Country)",
+        "ip": "IP Access rules (IP)",
+        "iprange": "IP Access rules (IP range)",
+        "hot": "HOT",
+    }
+    return mapping.get(source.strip().lower(), source.strip().replace("_", " ").title())
+
+
+def get_comment(event: dict[str, Any]) -> str:
+    service = get_service_label(event.get("source"))
+    source_code = (event.get("source") or "").lower()
+    robots_hint = (
+        "; requester ignored robots.txt"
+        if source_code in ("firewallcustom", "firewallrules")
+        else ""
+    )
+    return (
+        f"Unauthorized {event.get('clientRequestHTTPProtocol', '')} "
+        f"{event.get('clientRequestHTTPMethodName', '')} "
+        f"{event.get('clientRequestPath', '')} blocked by {service}{robots_hint}: "
+        f"(ASN: {event.get('clientAsn', '')}) "
+        f"(Network: {event.get('clientASNDescription', '')}) "
+        f"(Method: {event.get('clientRequestHTTPMethodName', '')}) "
+        f"(Path: {event.get('clientRequestPath', '')}) "
+        f"(Query: {event.get('clientRequestQuery', '')}) "
+        f"(User Agent: {event.get('userAgent', '')})"
+    )
+
+
+def _event_text(event: dict[str, Any]) -> str:
     return " ".join(
-        str(it.get(field) or "")
+        str(event.get(field) or "")
         for field in ("clientRequestPath", "clientRequestQuery", "userAgent")
     ).lower()
 
 
-def _matches_any_regex(patterns, text):
+def _matches_any_regex(patterns: tuple[str, ...], text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
-def _contains_any(markers, text):
+def _contains_any(markers: tuple[str, ...], text: str) -> bool:
     return any(marker in text for marker in markers)
 
 
-def _is_known_crawler(user_agent):
+def _is_known_crawler(user_agent: str) -> bool:
     return _contains_any(KNOWN_CRAWLER_USER_AGENT_MARKERS, user_agent)
 
 
-def get_categories(it):
-    """
-    Select AbuseIPDB categories from the Cloudflare event evidence.
-
-    AbuseIPDB accepts multiple comma-separated category IDs, but broad reports
-    are less useful. Keep this conservative and prefer one generic fallback
-    over guessing several specific categories.
-    """
-    source = (it.get("source") or "").strip().lower()
-    method = (it.get("clientRequestHTTPMethodName") or "").strip().upper()
-    path = (it.get("clientRequestPath") or "").lower()
-    user_agent = (it.get("userAgent") or "").lower()
-    text = _event_text(it)
+def get_categories(event: dict[str, Any]) -> str:
+    source = (event.get("source") or "").strip().lower()
+    method = (event.get("clientRequestHTTPMethodName") or "").strip().upper()
+    path = (event.get("clientRequestPath") or "").lower()
+    user_agent = (event.get("userAgent") or "").lower()
+    text = _event_text(event)
 
     categories = set()
 
@@ -362,113 +386,139 @@ def get_categories(it):
 
     return ",".join(sorted(categories, key=int))
 
-def hash_ip(ip):
-    """
-    Hashes the IP to avoid logging traceable information.
-    """
-    # Use timezone-aware datetime
-    salt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
-    combined_string = ip + salt + PEPPER
-    hashed = hashlib.sha3_256(combined_string.encode()).hexdigest()
-    return hashed
 
-def report_bad_ip(it):
-    """
-    Reports a bad IP address to AbuseIPDB and logs the abuseConfidenceScore.
-    Exits the script with status code 1 if reporting fails.
-    """
+def hash_ip(ip: str, pepper: str = "", now: datetime | None = None) -> str:
+    timestamp = now or datetime.now(UTC)
+    salt = timestamp.astimezone(UTC).strftime("%Y-%m-%dT%H")
+    return hashlib.sha3_256(f"{ip}{salt}{pepper}".encode()).hexdigest()
+
+
+def abuseipdb_headers(config: Config) -> dict[str, str]:
+    return {"Accept": "application/json", "Key": config.abuseipdb_api_key}
+
+
+def abuseipdb_params(event: dict[str, Any]) -> dict[str, str]:
+    return {
+        "ip": event["clientIP"],
+        "categories": get_categories(event),
+        "comment": get_comment(event),
+        "timestamp": event["datetime"],
+    }
+
+
+def decode_response_json(response: httpx.Response, service: str) -> dict[str, Any]:
     try:
-        url = 'https://api.abuseipdb.com/api/v2/report'
-        categories = get_categories(it)
-        params = {
-            'ip': it['clientIP'],
-            'categories': categories,
-            'comment': get_comment(it),
-            'timestamp': it['datetime']
-        }
-        headers_abuse = {
-            'Accept': 'application/json',
-            'Key': ABUSEIPDB_API_KEY
-        }
-        # Send a POST request to the AbuseIPDB API with the required contents
-        r = httpx.post(url=url, headers=headers_abuse, params=params)
+        decoded = response.json()
+    except json.JSONDecodeError as exc:
+        raise ApiError(f"Failed to decode JSON response from {service}.") from exc
+    if not isinstance(decoded, dict):
+        raise ApiError(f"{service} returned a non-object JSON response.")
+    return decoded
 
-        if r.status_code == 200:
-            # If response code 200, record a successfully reported IP
-            hashed_ip = hash_ip(it['clientIP'])
-            print("reported:", hashed_ip)
-            print("categories:", categories)
-            try:
-                decodedResponse = r.json()
-                responseData = decodedResponse.get("data", {})
-                abuse_confidence_score = responseData.get("abuseConfidenceScore", "N/A")
-                print(json.dumps({
-                    "abuseConfidenceScore": abuse_confidence_score,
-                    "ipAddress": hashed_ip
-                }, indent=4))
-            except json.JSONDecodeError:
-                print("Error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
-                sys.exit(1)
-        else:
-            # Otherwise, print the status code as an error
-            print("error:", r.status_code)
-            try:
-                decodedResponse = r.json()
-                responseData = decodedResponse.get("data", {})
-                if "ipAddress" in responseData:
-                    responseData["ipAddress"] = hash_ip(responseData["ipAddress"])
-                print(json.dumps(responseData, sort_keys=True, indent=4))
-            except json.JSONDecodeError:
-                print("error: Failed to decode JSON response from AbuseIPDB.", file=sys.stderr)
-            sys.exit(1)
 
-    except httpx.RequestError as e:
-        print(f"Error: Failed to connect to AbuseIPDB API: {e}", file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print("Error: Failed to decode JSON response from AbuseIPDB API.", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error while reporting bad IP: {e}", file=sys.stderr)
-        sys.exit(1)
+def report_bad_ip(
+    event: dict[str, Any],
+    config: Config,
+    post: Callable[..., httpx.Response] = httpx.post,
+    output: TextIO = sys.stdout,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    try:
+        response = post(
+            url=ABUSEIPDB_REPORT_URL,
+            headers=abuseipdb_headers(config),
+            params=abuseipdb_params(event),
+        )
+    except httpx.RequestError as exc:
+        raise ApiError(f"Failed to connect to AbuseIPDB API: {exc}") from exc
 
-# Define a list of excluded Cloudflare WAF Rule IDs
-excepted_ruleId = ["fa01280809254f82978e827892db4e46"]
+    hashed_ip = hash_ip(event["clientIP"], config.pepper, now)
+    if response.status_code == 200:
+        decoded = decode_response_json(response, "AbuseIPDB")
+        response_data = decoded.get("data", {})
+        print(f"reported: {hashed_ip}", file=output)
+        print(f"categories: {get_categories(event)}", file=output)
+        print(
+            json.dumps(
+                {
+                    "abuseConfidenceScore": response_data.get(
+                        "abuseConfidenceScore", "N/A"
+                    ),
+                    "ipAddress": hashed_ip,
+                },
+                indent=4,
+            ),
+            file=output,
+        )
+        return response_data
 
-def main():
-    # Print start time and end time within output
-    print("==================== Start ====================")
-    print("Events from:  " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeFrom)))
-    print("Events until: " + str(time.strftime("%Y-%m-%d %H:%M:%S", rangeUntil)))
+    print(f"error: {response.status_code}", file=output)
+    try:
+        response_data = decode_response_json(response, "AbuseIPDB").get("data", {})
+    except ApiError as exc:
+        print(f"error: {exc}", file=output)
+        raise
+    if "ipAddress" in response_data:
+        response_data["ipAddress"] = hash_ip(response_data["ipAddress"], config.pepper, now)
+    print(json.dumps(response_data, sort_keys=True, indent=4), file=output)
+    raise ApiError(f"AbuseIPDB report failed with HTTP {response.status_code}.")
 
-    # Fetch blocked IP data
-    a = get_blocked_ip()
 
-    # Process the fetched data if it's a valid dictionary with content
-    if isinstance(a, dict) and a:
-        try:
-            ip_bad_list = a["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
-            print(f"Number of firewall events fetched: {len(ip_bad_list)}")
+def should_report_event(
+    event: dict[str, Any], reported_ips: set[str], config: Config
+) -> bool:
+    client_ip = event.get("clientIP")
+    return (
+        bool(client_ip)
+        and event.get("ruleId") not in EXCEPTED_RULE_IDS
+        and client_ip not in reported_ips
+        and client_ip not in config.ignored_ip_addresses
+    )
 
-            reported_ip_list = []
-            for i in ip_bad_list:
-                if i['ruleId'] not in excepted_ruleId:
-                    if i['clientIP'] not in reported_ip_list and i['clientIP'] not in ignored_ip_addresses:
-                        report_bad_ip(i)
-                        reported_ip_list.append(i['clientIP'])
 
-            print(f"Number of IPs reported to AbuseIPDB: {len(reported_ip_list)}")
-        except KeyError as e:
-            print(f"Error: Missing expected key in Cloudflare API response: {e}", file=sys.stderr)
-            sys.exit(1)
-        except Exception as e:
-            print(f"Unexpected error while processing firewall events: {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print("Error: No valid data received from Cloudflare API. Exiting.", file=sys.stderr)
-        sys.exit(1)
+def process_events(
+    events: list[dict[str, Any]],
+    config: Config,
+    post: Callable[..., httpx.Response] = httpx.post,
+    output: TextIO = sys.stdout,
+    now: datetime | None = None,
+) -> int:
+    reported_ips: set[str] = set()
+    for event in events:
+        client_ip = event.get("clientIP")
+        if should_report_event(event, reported_ips, config):
+            report_bad_ip(event, config, post=post, output=output, now=now)
+            reported_ips.add(client_ip)
+    return len(reported_ips)
 
-    print("==================== End ====================")
 
-if __name__ == "__main__":
-    main()
+def run(
+    config: Config,
+    now: datetime | None = None,
+    post: Callable[..., httpx.Response] = httpx.post,
+    output: TextIO = sys.stdout,
+) -> int:
+    range_from, range_until = utc_time_window(now)
+    print("==================== Start ====================", file=output)
+    print(f"Events from:  {cloudflare_datetime(range_from)}", file=output)
+    print(f"Events until: {cloudflare_datetime(range_until)}", file=output)
+
+    response_json = get_blocked_ip(config, range_from, range_until, post=post)
+    events = extract_firewall_events(response_json)
+    print(f"Number of firewall events fetched: {len(events)}", file=output)
+    reported_count = process_events(events, config, post=post, output=output, now=now)
+    print(f"Number of IPs reported to AbuseIPDB: {reported_count}", file=output)
+    print("==================== End ====================", file=output)
+    return reported_count
+
+
+def main(environ: dict[str, str] | None = None) -> int:
+    try:
+        return run(Config.from_env(environ))
+    except (ConfigError, ApiError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
