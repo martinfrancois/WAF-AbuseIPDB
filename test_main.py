@@ -184,6 +184,9 @@ class CloudflareTest(unittest.TestCase):
         with self.assertRaisesRegex(main.ApiError, "Empty response"):
             main.validate_cloudflare_response({})
 
+        with self.assertRaisesRegex(main.ApiError, "non-object JSON"):
+            main.validate_cloudflare_response([{"data": {}}])
+
         with self.assertRaisesRegex(main.ApiError, "returned errors"):
             main.validate_cloudflare_response({"errors": [{"message": "bad"}]})
 

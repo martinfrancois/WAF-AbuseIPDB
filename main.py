@@ -224,9 +224,11 @@ def cloudflare_headers(config: Config) -> dict[str, str]:
     }
 
 
-def validate_cloudflare_response(response_json: dict[str, Any]) -> dict[str, Any]:
+def validate_cloudflare_response(response_json: Any) -> dict[str, Any]:
     if not response_json:
         raise ApiError("Empty response received from Cloudflare API.")
+    if not isinstance(response_json, dict):
+        raise ApiError("Cloudflare API returned a non-object JSON response.")
     if response_json.get("errors"):
         raise ApiError(
             "Cloudflare API returned errors: "
