@@ -1,1 +1,7 @@
 config.yml
+
+# Python build and test output
+__pycache__/
+*.py[cod]
+.coverage
+.venv/
