@@ -32,7 +32,7 @@
   },
   "packageRules": [
     {
-      "description": "Bundle every non-major update into one automergeable pull request. Majors are deliberately excluded so a pending major never blocks the automergeable bundle.",
+      "description": "Public repository: merge eligible non-major updates after checks pass. Group only dependencies that need coordinated updates; keep unrelated updates separate.",
       "matchUpdateTypes": [
         "minor",
         "patch",
@@ -40,8 +40,6 @@
         "pinDigest",
         "digest"
       ],
-      "groupName": "all non-major dependencies",
-      "groupSlug": "all-non-major",
       "automerge": true,
       "platformAutomerge": true
     },
