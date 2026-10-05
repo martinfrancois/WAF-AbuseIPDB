@@ -8,8 +8,9 @@ linting against the old language level with no signal. This test is the signal.
 
 import pathlib
 import re
-import tomllib
 import unittest
+
+import tomllib
 
 ROOT = pathlib.Path(__file__).parent
 WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
