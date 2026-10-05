@@ -159,7 +159,7 @@ class Config:
     ignored_ip_addresses: tuple[str, ...] = ()
 
     @classmethod
-    def from_env(cls, environ: dict[str, str] | None = None) -> "Config":
+    def from_env(cls, environ: dict[str, str] | None = None) -> Config:
         values = os.environ if environ is None else environ
         required = {
             "CLOUDFLARE_ZONE_ID": values.get("CLOUDFLARE_ZONE_ID"),
