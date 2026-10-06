@@ -24,11 +24,19 @@
   "dependencyDashboardApproval": false,
   "separateMajorMinor": true,
   "separateMultipleMajor": true,
+  "automergeType": "pr",
+  "ignoreTests": false,
+  "separateMinorPatch": false,
   "vulnerabilityAlerts": {
     "enabled": true,
     "labels": [
       "security"
-    ]
+    ],
+    "minimumReleaseAge": null,
+    "schedule": [],
+    "updateNotScheduled": true,
+    "groupName": null,
+    "groupSlug": null
   },
   "packageRules": [
     {
