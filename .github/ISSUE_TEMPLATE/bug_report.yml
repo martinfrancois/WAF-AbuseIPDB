@@ -1,0 +1,31 @@
+name: Bug report
+description: Report something that doesn't work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Leave out API keys, your Cloudflare zone ID and email, the pepper, real IP addresses and personal data, also from logs and screenshots.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead, for example a wrong AbuseIPDB category or an error from the Cloudflare or AbuseIPDB API.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How you ran `main.py` (the Report workflow or a local run) and, if it's about one event, its Cloudflare fields with the IP address replaced, such as source, path, method and user agent.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit you ran, Python version, where it runs (GitHub Actions or elsewhere), and anything else that matters here.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      render: text
