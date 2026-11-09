@@ -12,7 +12,13 @@ import tomllib
 import unittest
 
 ROOT = pathlib.Path(__file__).parent
-WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+PYTHON_MARKERS = ("setup-python", "python-version")
+# The issue claim callers run no Python, so only workflows that set up or name one count.
+WORKFLOWS = sorted(
+    path
+    for path in (ROOT / ".github" / "workflows").glob("*.yml")
+    if any(marker in path.read_text(encoding="utf-8") for marker in PYTHON_MARKERS)
+)
 PYTHON_VERSION = re.compile(r"""python-version:\s+['"]?(\d+\.\d+)['"]?""")
 
 
@@ -28,7 +34,7 @@ class PythonVersionContractTest(unittest.TestCase):
         # If a workflow is reformatted so the regex stops matching, Renovate goes
         # quiet rather than failing. Fail here instead.
         found = declared_workflow_versions()
-        self.assertTrue(WORKFLOWS, "no workflow files were discovered")
+        self.assertTrue(WORKFLOWS, "no workflow sets up or names Python")
         for name, versions in found.items():
             self.assertTrue(
                 versions,
